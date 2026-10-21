@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "format": "rpm",
+  "fedora": 45,
+  "architectures": ["x86_64", "aarch64"],
+  "channels": ["stable", "testing"],
+  "applications": [
+    {
+      "id": "sirius-installer",
+      "source": {
+        "repository": "luminusOS/sirius",
+        "workflow": ".github/workflows/ci.yml"
+      }
+    }
+  ]
+}
