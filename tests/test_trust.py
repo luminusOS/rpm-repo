@@ -1,6 +1,7 @@
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -11,7 +12,7 @@ from tools import trust
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PYTHON = "/tmp/opencode/luminus-t06-venv/bin/python"
+PYTHON = sys.executable
 
 
 def run_gpg(home, *arguments):
