@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "format": "rpm",
+  "status": "provisioned",
+  "max_validity_days": 400,
+  "channels": {
+    "stable": {
+      "primary_fingerprint": "92F1F4F04BC9E2A3C44CC2D35AF0A19B97265C0D",
+      "signing_subkey_fingerprint": "DF65E608C2BA042616DE26C99FE1A668F725C0B7",
+      "public_key": "trust/stable.asc"
+    },
+    "testing": {
+      "primary_fingerprint": "11DDF884BFC46A5C548304028B3CED01A7D81531",
+      "signing_subkey_fingerprint": "C94F2001A3EC7299426D751E5959745679F5A548",
+      "public_key": "trust/testing.asc"
+    }
+  }
+}
