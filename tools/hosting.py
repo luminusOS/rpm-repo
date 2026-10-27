@@ -97,10 +97,10 @@ def validate_probe_url(url):
     if FORMAT == "rpm":
         valid = (
             len(parts) == 6 and parts[1] == "45"
-            and parts[2] in ("x86_64", "aarch64") and parts[3] == "_t05"
+            and parts[2] in ("x86_64", "aarch64") and parts[3] == "_hosting-check"
             and NONCE.fullmatch(parts[4]) and parts[5] == "immutable.rpm"
         ) or (
-            len(parts) == 4 and parts[1] == "_t05"
+            len(parts) == 4 and parts[1] == "_hosting-check"
             and NONCE.fullmatch(parts[2]) and parts[3] == "metadata.txt"
         )
     if not valid:
@@ -143,7 +143,7 @@ def _response_record(response, read_body):
 
 
 def _request(opener, url, method):
-    request = Request(url, method=method, headers={"User-Agent": "LuminusOS-T05-probe/1"})
+    request = Request(url, method=method, headers={"User-Agent": "LuminusOS-hosting-check/1"})
     try:
         response = opener.open(request, timeout=REQUEST_TIMEOUT)
     except HTTPError as error:
