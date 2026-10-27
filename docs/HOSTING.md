@@ -27,7 +27,7 @@ package hosts.
 
 ## Live verification
 
-The bounded T05 run verified TLS, HEAD/GET and SHA-256 for synthetic objects.
+The bounded hosting verification run verified TLS, HEAD/GET and SHA-256 for synthetic objects.
 Stable x86_64 and testing aarch64 immutable GETs returned `HIT` at GRU. Mutable
 metadata updates were visible with `no-store`; a missing immutable object returned
 404 before upload and 200 after creation without a purge. HEAD responses were
@@ -47,7 +47,7 @@ management readbacks that confirmed cleanup and the live hosting policy.
 ```sh
 .venv/bin/python -B -m unittest discover -s tests -p 'test_*.py' -v
 .venv/bin/python tools/hosting.py validate
-.venv/bin/python tools/hosting.py probe https://rpm.luminusos.org/stable/45/x86_64/_t05/NONCE/immutable.rpm
+.venv/bin/python tools/hosting.py probe https://rpm.luminusos.org/stable/45/x86_64/_hosting-check/NONCE/immutable.rpm
 ```
 
 Use the probe command only with an authorized, owned synthetic object; the
@@ -58,10 +58,10 @@ the bucket root does not validate or invalidate the repository.
 
 ## Bounded live test and cleanup
 
-The authorized T05 run permits at most 200 operation/test requests and 64 KiB
+The authorized hosting verification run permitted at most 200 operation/test requests and 64 KiB
 of synthetic upload data, with 40 requests reserved for cleanup. Test actual
 objects, HEAD/GET, byte integrity, mutable replacement, negative-cache recovery,
-and immutable cache hits. Keep fixtures under an owned `_t05/NONCE/` path;
+and immutable cache hits. Keep fixtures under an owned `_hosting-check/NONCE/` path;
 do not upload real repodata or packages.
 
 Delete only the exact keys created by the run. Purge only their exact public

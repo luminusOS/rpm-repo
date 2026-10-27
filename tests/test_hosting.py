@@ -44,27 +44,27 @@ class HostingTests(unittest.TestCase):
 
     def test_rpm_release_path_classification_requires_rpm_file(self):
         self.assertEqual(
-            hosting.classify_path("/stable/45/x86_64/_t05/run/immutable.rpm"),
+            hosting.classify_path("/stable/45/x86_64/_hosting-check/run/immutable.rpm"),
             {"classification": "immutable", "cache_control": "public, max-age=31536000, immutable"},
         )
         self.assertEqual(
-            hosting.classify_path("/stable/45/x86_64/_t05/run/metadata.txt"),
+            hosting.classify_path("/stable/45/x86_64/_hosting-check/run/metadata.txt"),
             {"classification": "mutable", "cache_control": "no-store"},
         )
 
     def test_probe_accepts_only_owned_https_test_paths(self):
         nonce = "run_2026-10"
-        valid = f"https://rpm.luminusos.org/stable/45/x86_64/_t05/{nonce}/immutable.rpm"
+        valid = f"https://rpm.luminusos.org/stable/45/x86_64/_hosting-check/{nonce}/immutable.rpm"
         for url in (
-            "http://rpm.luminusos.org/stable/45/x86_64/_t05/run/immutable.rpm",
-            "https://evil.example/stable/45/x86_64/_t05/run/immutable.rpm",
-            "https://rpm.luminusos.org:443/stable/45/x86_64/_t05/run/immutable.rpm",
-            "https://user@rpm.luminusos.org/stable/45/x86_64/_t05/run/immutable.rpm",
-            "https://rpm.luminusos.org/stable/45/x86_64/_t05/run/a%2fb",
-            "https://rpm.luminusos.org/stable/45/x86_64/_t05/run/../repodata",
-            "https://rpm.luminusos.org/stable/45/x86_64/_t05/run/immutable.rpm?x=1",
+            "http://rpm.luminusos.org/stable/45/x86_64/_hosting-check/run/immutable.rpm",
+            "https://evil.example/stable/45/x86_64/_hosting-check/run/immutable.rpm",
+            "https://rpm.luminusos.org:443/stable/45/x86_64/_hosting-check/run/immutable.rpm",
+            "https://user@rpm.luminusos.org/stable/45/x86_64/_hosting-check/run/immutable.rpm",
+            "https://rpm.luminusos.org/stable/45/x86_64/_hosting-check/run/a%2fb",
+            "https://rpm.luminusos.org/stable/45/x86_64/_hosting-check/run/../repodata",
+            "https://rpm.luminusos.org/stable/45/x86_64/_hosting-check/run/immutable.rpm?x=1",
             "https://rpm.luminusos.org/stable/45/x86_64/luminus-1.rpm",
-            "https://flatpak.luminusos.org/stable/objects/_t05/run/immutable.bin",
+            "https://flatpak.luminusos.org/stable/objects/_hosting-check/run/immutable.bin",
         ):
             with self.subTest(url=url), self.assertRaises(ValueError):
                 hosting.validate_probe_url(url)
@@ -89,7 +89,7 @@ class HostingTests(unittest.TestCase):
 
         opener = mock.Mock()
         opener.open.side_effect = [Response(b""), Response()]
-        url = "https://rpm.luminusos.org/stable/45/x86_64/_t05/run/immutable.rpm"
+        url = "https://rpm.luminusos.org/stable/45/x86_64/_hosting-check/run/immutable.rpm"
         result = hosting.probe(url, opener=opener)
         self.assertEqual(result["requests"], 2)
         self.assertEqual(result["expected_policy"]["classification"], "immutable")
@@ -111,7 +111,7 @@ class HostingTests(unittest.TestCase):
         opener = mock.Mock()
         opener.open.side_effect = missing
         result = hosting.probe(
-            "https://rpm.luminusos.org/stable/_t05/run/metadata.txt", opener=opener,
+            "https://rpm.luminusos.org/stable/_hosting-check/run/metadata.txt", opener=opener,
         )
         self.assertEqual([result[method]["status"] for method in ("head", "get")], [404, 404])
         self.assertEqual(result["requests"], 2)
@@ -138,7 +138,7 @@ class HostingTests(unittest.TestCase):
         opener.open.side_effect = [Response(), Response()]
         with self.assertRaisesRegex(ValueError, "response exceeds"):
             hosting.probe(
-                "https://rpm.luminusos.org/stable/_t05/run/metadata.txt", opener=opener,
+                "https://rpm.luminusos.org/stable/_hosting-check/run/metadata.txt", opener=opener,
             )
 
 
