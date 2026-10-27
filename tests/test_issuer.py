@@ -671,5 +671,26 @@ class IssuerTests(unittest.TestCase):
             self.assertIn("always()", json.dumps(publisher["steps"]))
 
 
+class ArtifactListingPathTests(unittest.TestCase):
+    def test_only_the_run_artifact_listing_of_known_repositories_is_allowed(self):
+        calls = []
+
+        class Opener:
+            def open(self, request, timeout):
+                calls.append(request.full_url)
+                raise issuer.HTTPError(request.full_url, 404, "x", None, None)
+
+        with self.assertRaises(issuer.IssuerError):
+            issuer.fetch_github_json("/repos/luminusOS/sirius/actions/runs/5/artifacts", opener=Opener())
+        self.assertEqual(calls, ["https://api.github.com/repos/luminusOS/sirius/actions/runs/5/artifacts"])
+        for path in ("/repos/evil/x/actions/runs/5/artifacts", "/repos/luminusOS/sirius/actions/runs/5/artifacts/1",
+                     "/repos/luminusOS/sirius/actions/runs/5/artifacts/artifacts",
+                     "/repos/luminusOS/sirius/actions/runs/x/artifacts"):
+            calls.clear()
+            with self.assertRaises(issuer.IssuerError):
+                issuer.fetch_github_json(path, opener=Opener())
+            self.assertEqual(calls, [], path)
+
+
 if __name__ == "__main__":
     unittest.main()
