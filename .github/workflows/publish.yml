@@ -1,0 +1,246 @@
+name: Publish RPM release
+"on":
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Target repository channel
+        required: true
+        type: choice
+        options: [stable, testing]
+      package_id:
+        description: Allowlisted package name
+        required: true
+        type: choice
+        options: [sirius-installer]
+      version:
+        description: Normalized release version
+        required: true
+        type: string
+      tag:
+        description: Exact source release tag
+        required: true
+        type: string
+      git_sha:
+        description: Source commit SHA
+        required: true
+        type: string
+      source_run_id:
+        description: Successful source workflow run ID
+        required: true
+        type: string
+      source_run_attempt:
+        description: Source workflow run attempt
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: rpm-publish-${{ inputs.channel }}
+  cancel-in-progress: false
+jobs:
+  checks:
+    name: Run tests
+    if: ${{ github.event_name == 'workflow_dispatch' && github.repository == 'luminusOS/rpm-repo' && github.ref == 'refs/heads/main' && github.ref_protected }}
+    runs-on: ubuntu-24.04
+    container: registry.fedoraproject.org/fedora:45
+    timeout-minutes: 15
+    steps:
+      - name: Install tools
+        run: dnf install -y python3 python3-jsonschema python3-pyyaml rpm rpm-sign createrepo_c gnupg2 findutils rpm-build dnf5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Run tests and contracts
+        run: |
+          install -d -m 700 /tmp/opencode
+          python3 -B -m unittest discover -s tests -p 'test_*.py' -q
+          python3 -B -m unittest discover -s contracts -p 'test_*.py' -q
+  prepare:
+    name: Verify release
+    needs: checks
+    if: ${{ needs.checks.result == 'success' && github.event_name == 'workflow_dispatch' && github.repository == 'luminusOS/rpm-repo' && github.ref == 'refs/heads/main' && github.ref_protected }}
+    runs-on: ubuntu-24.04
+    container: registry.fedoraproject.org/fedora:45
+    timeout-minutes: 30
+    steps:
+      - name: Install tools
+        run: dnf install -y python3 python3-jsonschema python3-pyyaml rpm rpm-sign createrepo_c gnupg2 findutils
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Write release descriptor
+        env:
+          CHANNEL: ${{ inputs.channel }}
+          PACKAGE_ID: ${{ inputs.package_id }}
+          VERSION: ${{ inputs.version }}
+          TAG: ${{ inputs.tag }}
+          GIT_SHA: ${{ inputs.git_sha }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt }}
+        run: |
+          install -d -m 700 /tmp/luminus-publish
+          python3 - <<'PY'
+          import json, os
+          value = {"format":"rpm", "channel":os.environ["CHANNEL"], "package_id":os.environ["PACKAGE_ID"],
+                   "version":os.environ["VERSION"], "tag":os.environ["TAG"], "git_sha":os.environ["GIT_SHA"],
+                   "source_run_id":os.environ["SOURCE_RUN_ID"], "source_run_attempt":int(os.environ["SOURCE_RUN_ATTEMPT"])}
+          with open("/tmp/luminus-publish/descriptor.json", "w") as out:
+              json.dump(value, out, sort_keys=True)
+          PY
+      - name: Verify the release and the public channel without credentials
+        run: python3 -B tools/rpm_import.py --mode prepare --descriptor /tmp/luminus-publish/descriptor.json --work-dir /tmp/luminus-publish/work
+  issuer:
+    name: Issue credentials
+    needs: prepare
+    if: ${{ needs.prepare.result == 'success' && github.event_name == 'workflow_dispatch' && github.repository == 'luminusOS/rpm-repo' && github.ref == 'refs/heads/main' && github.ref_protected }}
+    environment: issuer-${{ inputs.channel }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify protected issuer context
+        run: python3 -B tools/signing_environment.py context --role issuer --channel "$RELEASE_CHANNEL"
+        env:
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          GATE_GITHUB_REPOSITORY: ${{ github.repository }}
+          GATE_GITHUB_REF: ${{ github.ref }}
+          GATE_GITHUB_REF_PROTECTED: ${{ github.ref_protected }}
+          GATE_GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GATE_ENVIRONMENT: issuer-${{ inputs.channel }}
+      - name: Issue channel-scoped credential capsule (900-second credential TTL)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          R2_PARENT_ACCESS_KEY_ID: ${{ secrets.R2_PARENT_ACCESS_KEY_ID }}
+          R2_PARENT_SECRET_ACCESS_KEY: ${{ secrets.R2_PARENT_SECRET_ACCESS_KEY }}
+          TRANSPORT_KEY: ${{ secrets.TRANSPORT_KEY }}
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          RELEASE_PACKAGE_ID: ${{ inputs.package_id }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_GIT_SHA: ${{ inputs.git_sha }}
+          RELEASE_SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          RELEASE_SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt }}
+        run: python3 -B tools/issuer.py issue --ttl 900 --channel "$RELEASE_CHANNEL" --package-id "$RELEASE_PACKAGE_ID" --version "$RELEASE_VERSION" --git-sha "$RELEASE_GIT_SHA" --source-run-id "$RELEASE_SOURCE_RUN_ID" --source-run-attempt "$RELEASE_SOURCE_RUN_ATTEMPT" --output "$RUNNER_TEMP/r2-credentials.gpg"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: rpm-capsule-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/r2-credentials.gpg
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+  publisher:
+    name: Sign and publish
+    container: registry.fedoraproject.org/fedora:45
+    needs: issuer
+    if: ${{ needs.issuer.result == 'success' && github.event_name == 'workflow_dispatch' && github.repository == 'luminusOS/rpm-repo' && github.ref == 'refs/heads/main' && github.ref_protected }}
+    environment: publisher-${{ inputs.channel }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Install signing and upload tools
+        run: |
+          dnf install -y python3 python3-jsonschema python3-pyyaml rpm rpm-sign createrepo_c gnupg2 findutils
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Prepare GnuPG home
+        run: |
+          install -d -m 700 /dev/shm/luminus-publish-gnupg
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: rpm-capsule-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/publish-capsule
+      - name: Consume capsule and verify publisher context
+        run: |
+          python3 -B tools/signing_environment.py context --role publisher --channel "$RELEASE_CHANNEL"
+          python3 -B tools/issuer.py consume --channel "$RELEASE_CHANNEL" --input "$RUNNER_TEMP/publish-capsule/r2-credentials.gpg" --output "$RUNNER_TEMP/r2-credentials.json"
+        env:
+          TRANSPORT_KEY: ${{ secrets.TRANSPORT_KEY }}
+          GATE_GITHUB_REPOSITORY: ${{ github.repository }}
+          GATE_GITHUB_REF: ${{ github.ref }}
+          GATE_GITHUB_REF_PROTECTED: ${{ github.ref_protected }}
+          GATE_GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GATE_ENVIRONMENT: publisher-${{ inputs.channel }}
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+      - name: Import signing subkey to verified tmpfs GnuPG home
+        env:
+          GNUPGHOME: /dev/shm/luminus-publish-gnupg
+          SIGNING_SUBKEY: ${{ secrets.SIGNING_SUBKEY }}
+          SIGNING_SUBKEY_PASSPHRASE: ${{ secrets.SIGNING_SUBKEY_PASSPHRASE }}
+          SIGNING_SUBKEY_FINGERPRINT: ${{ vars.SIGNING_SUBKEY_FINGERPRINT }}
+          SIGNING_PRIMARY_FINGERPRINT: ${{ vars.SIGNING_PRIMARY_FINGERPRINT }}
+        run: |
+          test "$(stat -f -c %T "$GNUPGHOME")" = tmpfs
+          chmod 700 "$GNUPGHOME"
+          printf 'allow-preset-passphrase\n' > "$GNUPGHOME/gpg-agent.conf"
+          gpgconf --launch gpg-agent
+          printf '%s' "$SIGNING_SUBKEY" | gpg --batch --import
+          python3 - <<'PY'
+          import os, subprocess
+          output = subprocess.run(["gpg", "--batch", "--with-colons", "--fingerprint", "--fingerprint",
+                                   "--list-secret-keys"], check=True, capture_output=True, text=True).stdout
+          records = []
+          current = None
+          for line in output.splitlines():
+              fields = line.split(":")
+              if fields[0] in ("sec", "ssb"):
+                  current = {"kind": fields[0], "stub": fields[14] if len(fields) > 14 else "", "fingerprint": None}
+                  records.append(current)
+              elif fields[0] == "fpr" and current is not None and current["fingerprint"] is None:
+                  current["fingerprint"] = fields[9]
+          primary = [item for item in records if item["kind"] == "sec"]
+          subkeys = [item for item in records if item["kind"] == "ssb"]
+          if (len(primary) != 1 or primary[0]["stub"] != "#"
+                  or primary[0]["fingerprint"] != os.environ["SIGNING_PRIMARY_FINGERPRINT"]
+                  or len(subkeys) != 1 or subkeys[0]["stub"] == "#"
+                  or subkeys[0]["fingerprint"] != os.environ["SIGNING_SUBKEY_FINGERPRINT"]):
+              raise SystemExit("channel signing key material does not match its environment")
+          PY
+          KEYGRIP="$(gpg --batch --with-colons --with-keygrip --list-secret-keys "$SIGNING_SUBKEY_FINGERPRINT" | awk -F: -v fingerprint="$SIGNING_SUBKEY_FINGERPRINT" '$1 == "fpr" { selected = ($10 == fingerprint) } $1 == "grp" && selected { print $10; exit }')"
+          test -n "$KEYGRIP"
+          export KEYGRIP
+          python3 - <<'PY'
+          import os, subprocess
+          command = "PRESET_PASSPHRASE {} -1 {}\n/bye\n".format(os.environ["KEYGRIP"], os.environ["SIGNING_SUBKEY_PASSPHRASE"].encode().hex())
+          subprocess.run(["gpg-connect-agent"], input=command.encode(), check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+          PY
+          unset SIGNING_SUBKEY SIGNING_SUBKEY_PASSPHRASE KEYGRIP
+      - name: Write trusted release descriptor from the dispatch inputs
+        env:
+          CHANNEL: ${{ inputs.channel }}
+          PACKAGE_ID: ${{ inputs.package_id }}
+          VERSION: ${{ inputs.version }}
+          TAG: ${{ inputs.tag }}
+          GIT_SHA: ${{ inputs.git_sha }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt }}
+        run: |
+          install -d -m 700 /tmp/luminus-publish
+          python3 - <<'PY'
+          import json, os
+          value = {"format":"rpm", "channel":os.environ["CHANNEL"], "package_id":os.environ["PACKAGE_ID"],
+                   "version":os.environ["VERSION"], "tag":os.environ["TAG"], "git_sha":os.environ["GIT_SHA"],
+                   "source_run_id":os.environ["SOURCE_RUN_ID"], "source_run_attempt":int(os.environ["SOURCE_RUN_ATTEMPT"])}
+          with open("/tmp/luminus-publish/descriptor.json", "w") as out:
+              json.dump(value, out, sort_keys=True)
+          PY
+      - name: Verify the release again, sign, upload, and publicly verify with scoped credentials
+        env:
+          GNUPGHOME: /dev/shm/luminus-publish-gnupg
+          SIGNING_SUBKEY_FINGERPRINT: ${{ vars.SIGNING_SUBKEY_FINGERPRINT }}
+          CREDENTIALS: ${{ runner.temp }}/r2-credentials.json
+        run: |
+          python3 -B tools/rpm_import.py --mode publish \
+            --descriptor /tmp/luminus-publish/descriptor.json --work-dir /tmp/luminus-publish/work \
+            --gpg-home "$GNUPGHOME" --signing-fingerprint "$SIGNING_SUBKEY_FINGERPRINT" --credentials "$CREDENTIALS"
+      - name: Remove temporary credentials and key material
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/r2-credentials.json" "$RUNNER_TEMP/publish-capsule/r2-credentials.gpg"
+          gpgconf --homedir /dev/shm/luminus-publish-gnupg --kill gpg-agent || true
+          rm -rf /dev/shm/luminus-publish-gnupg /tmp/luminus-publish
