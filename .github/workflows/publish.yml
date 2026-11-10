@@ -46,18 +46,16 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Install tools
-        run: dnf install -y python3 python3-pip rpm rpm-sign createrepo_c gnupg2 findutils rpm-build dnf5
+        run: dnf install -y python3 python3-jsonschema python3-pyyaml rpm rpm-sign createrepo_c gnupg2 findutils rpm-build dnf5
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
       - name: Run tests and contracts
         run: |
-          python3 -m venv /tmp/luminus-publish-venv
-          /tmp/luminus-publish-venv/bin/python -m pip install --only-binary=:all: -r requirements-dev.txt
           install -d -m 700 /tmp/opencode
-          /tmp/luminus-publish-venv/bin/python -B -m unittest discover -s tests -p 'test_*.py' -q
-          /tmp/luminus-publish-venv/bin/python -B -m unittest discover -s contracts -p 'test_*.py' -q
+          python3 -B -m unittest discover -s tests -p 'test_*.py' -q
+          python3 -B -m unittest discover -s contracts -p 'test_*.py' -q
   prepare:
     name: Verify release
     needs: checks
@@ -67,15 +65,11 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Install tools
-        run: dnf install -y python3 python3-pip rpm rpm-sign createrepo_c gnupg2 findutils
+        run: dnf install -y python3 python3-jsonschema python3-pyyaml rpm rpm-sign createrepo_c gnupg2 findutils
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - name: Install Python dependencies
-        run: |
-          python3 -m venv /tmp/luminus-publish-venv
-          /tmp/luminus-publish-venv/bin/python -m pip install --only-binary=:all: -r requirements-dev.txt
       - name: Write release descriptor
         env:
           CHANNEL: ${{ inputs.channel }}
@@ -96,7 +90,7 @@ jobs:
               json.dump(value, out, sort_keys=True)
           PY
       - name: Verify the release and the public channel without credentials
-        run: /tmp/luminus-publish-venv/bin/python -B tools/rpm_import.py --mode prepare --descriptor /tmp/luminus-publish/descriptor.json --work-dir /tmp/luminus-publish/work
+        run: python3 -B tools/rpm_import.py --mode prepare --descriptor /tmp/luminus-publish/descriptor.json --work-dir /tmp/luminus-publish/work
   issuer:
     name: Issue credentials
     needs: prepare
@@ -149,15 +143,13 @@ jobs:
     steps:
       - name: Install signing and upload tools
         run: |
-          dnf install -y python3 python3-pip rpm rpm-sign createrepo_c gnupg2 findutils
+          dnf install -y python3 python3-jsonschema python3-pyyaml rpm rpm-sign createrepo_c gnupg2 findutils
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - name: Prepare Python environment and GnuPG home
+      - name: Prepare GnuPG home
         run: |
-          python3 -m venv /tmp/luminus-publish-venv
-          /tmp/luminus-publish-venv/bin/python -m pip install --only-binary=:all: -r requirements-dev.txt
           install -d -m 700 /dev/shm/luminus-publish-gnupg
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
@@ -243,7 +235,7 @@ jobs:
           SIGNING_SUBKEY_FINGERPRINT: ${{ vars.SIGNING_SUBKEY_FINGERPRINT }}
           CREDENTIALS: ${{ runner.temp }}/r2-credentials.json
         run: |
-          /tmp/luminus-publish-venv/bin/python -B tools/rpm_import.py --mode publish \
+          python3 -B tools/rpm_import.py --mode publish \
             --descriptor /tmp/luminus-publish/descriptor.json --work-dir /tmp/luminus-publish/work \
             --gpg-home "$GNUPGHOME" --signing-fingerprint "$SIGNING_SUBKEY_FINGERPRINT" --credentials "$CREDENTIALS"
       - name: Remove temporary credentials and key material

@@ -168,10 +168,10 @@ class PublishWorkflowTests(unittest.TestCase):
         names = [step.get("name", "") for step in steps]
         install = next(i for i, name in enumerate(names) if name.startswith("Install signing"))
         checkout = next(i for i, step in enumerate(steps) if str(step.get("uses", "")).startswith("actions/checkout@"))
-        venv = next(i for i, name in enumerate(names) if name.startswith("Prepare Python"))
+        home = next(i for i, name in enumerate(names) if name.startswith("Prepare GnuPG"))
         consume = names.index("Consume capsule and verify publisher context")
         self.assertLess(install, checkout)
-        self.assertLess(checkout, venv)
+        self.assertLess(checkout, home)
         self.assertLess(checkout, consume)
 
     def test_every_job_that_runs_python_tools_in_a_container_installs_them_first(self):

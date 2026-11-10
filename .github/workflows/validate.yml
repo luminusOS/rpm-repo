@@ -16,21 +16,17 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Install packaging tools
-        run: dnf install -y python3 python3-pip rpm-build rpm-sign createrepo_c gnupg2 dnf5 findutils
+        run: dnf install -y python3 python3-jsonschema python3-pyyaml rpm-build rpm-sign createrepo_c gnupg2 dnf5 findutils
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install test dependencies
-        run: |
-          python3 -m venv .venv
-          .venv/bin/python -m pip install --only-binary=:all: -r requirements-dev.txt
       - name: Prepare disposable signing fixture root
         run: install -d -m 700 /tmp/opencode
       - name: Check frozen artifact contracts
-        run: .venv/bin/python -B -m unittest discover -s contracts -p 'test_*.py' -v
+        run: python3 -B -m unittest discover -s contracts -p 'test_*.py' -v
       - name: Check repository descriptors
-        run: .venv/bin/python tools/descriptors.py check
+        run: python3 tools/descriptors.py check
       - name: Check catalog and repository tools
-        run: .venv/bin/python -B -m unittest discover -s tests -p 'test_*.py' -v
+        run: python3 -B -m unittest discover -s tests -p 'test_*.py' -v
       - name: Validate catalog
-        run: .venv/bin/python tools/catalog.py catalog.json
+        run: python3 tools/catalog.py catalog.json
