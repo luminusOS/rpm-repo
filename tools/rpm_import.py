@@ -10,7 +10,6 @@ new is added, so a damaged or tampered public repository stops the import.
 
 import argparse
 from dataclasses import dataclass
-import zlib
 import hashlib
 import hmac
 import json
@@ -46,7 +45,6 @@ KEY_NAME = "luminus.asc"
 MAX_CHECKSUMS_BYTES = 64 * 1024
 MAX_RPM_BYTES = 256 * 1024 * 1024
 MAX_METADATA_BYTES = 64 * 1024 * 1024
-MAX_PRIMARY_XML_BYTES = 256 * 1024 * 1024
 DOWNLOAD_TIMEOUT = 30
 PUBLIC_VERIFY_TIMEOUT = 120
 USER_AGENT = "luminus-rpm-publisher/1"
@@ -54,7 +52,6 @@ REDIRECT_ASSET_HOSTS = {"objects.githubusercontent.com", "release-assets.githubu
 ALLOWED_ASSET_HOSTS = {"github.com"} | REDIRECT_ASSET_HOSTS
 TAG_PATTERN = re.compile(r"v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-rc\.?[1-9][0-9]*)?\Z")
 RPM_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,199}\.rpm\Z")
-LOCATION = re.compile(r"Packages/([A-Za-z0-9][A-Za-z0-9._+-]{0,199}\.rpm)\Z")
 SHA256 = re.compile(r"[a-f0-9]{64}\Z")
 MUTABLE_PHASE_BUDGET_SECONDS = 120
 MAX_LIST_PAGES = 2000
@@ -342,6 +339,43 @@ def _verify_detached(root, channel, content, signature, work_dir):
         raise ImporterError("channel repository authentication failed")
 
 
+def _is_legacy_ledger(content):
+    try:
+        document = json.loads(content.decode("utf-8")) if content is not None else None
+    except (UnicodeError, ValueError):
+        return False
+    return isinstance(document, dict) and "packages" in document and "ledger" not in document
+
+
+def open_ledger(root, channel, envelope, work_dir, legacy_signature=None):
+    """Verify the signed ledger envelope and return the ledger text, or None if absent.
+
+    A channel written before the envelope existed has the ledger and a detached
+    `.sig` object; it is still verified and is replaced by an envelope on the next
+    publication.
+
+    The ledger and its signature travel in one object so that a single write replaces
+    both, and an interrupted publication can never leave a ledger without its signature.
+    """
+    if envelope is None:
+        return None
+    if _is_legacy_ledger(envelope):
+        if legacy_signature is None:
+            raise ImporterError("import ledger signature is missing")
+        _verify_detached(root, channel, envelope, legacy_signature, work_dir)
+        return envelope
+    try:
+        document = json.loads(envelope.decode("utf-8"))
+        content = document["ledger"].encode("utf-8")
+        signature = document["signature"].encode("utf-8")
+        if set(document) != {"ledger", "signature"}:
+            raise ValueError("unexpected fields")
+    except (UnicodeError, ValueError, KeyError, TypeError, AttributeError) as error:
+        raise ImporterError("import ledger is invalid") from error
+    _verify_detached(root, channel, content, signature, work_dir)
+    return content
+
+
 def load_ledger(content):
     if content is None:
         return {}
@@ -365,78 +399,29 @@ def load_ledger(content):
     return ledger["packages"]
 
 
-def _primary_packages(repomd, public, channel, arch):
-    try:
-        root = ElementTree.fromstring(repomd)
-    except ElementTree.ParseError as error:
-        raise ImporterError("channel repository metadata is invalid") from error
-    namespace = {"r": "http://linux.duke.edu/metadata/repo"}
-    data = [item for item in root.findall("r:data", namespace) if item.get("type") == "primary"]
-    if len(data) != 1:
-        raise ImporterError("channel repository metadata is invalid")
-    location = data[0].find("r:location", namespace).get("href")
-    checksum = data[0].find("r:checksum", namespace)
-    if not re.fullmatch(r"repodata/[A-Za-z0-9._-]+-primary\.xml\.gz", location or "") or checksum.get("type") != "sha256":
-        raise ImporterError("channel repository metadata is invalid")
-    blob = public.get(channel, f"{FEDORA}/{arch}/{location}")
-    if blob is None or not hmac.compare_digest(hashlib.sha256(blob).hexdigest(), checksum.text):
-        raise ImporterError("channel repository metadata does not match its signed index")
-    try:
-        inflater = zlib.decompressobj(wbits=31)
-        xml = inflater.decompress(blob, MAX_PRIMARY_XML_BYTES + 1)
-        if len(xml) > MAX_PRIMARY_XML_BYTES or inflater.unconsumed_tail:
-            raise ImporterError("channel repository metadata is too large")
-        primary = ElementTree.fromstring(xml)
-    except (zlib.error, ElementTree.ParseError) as error:
-        raise ImporterError("channel repository metadata is invalid") from error
-    packages = {}
-    for item in primary:
-        if item.tag.rsplit("}", 1)[-1] != "package":
-            continue
-        fields = {child.tag.rsplit("}", 1)[-1]: child for child in item}
-        match = LOCATION.fullmatch(fields["location"].get("href", ""))
-        if not match or fields["checksum"].get("type") != "sha256" or match.group(1) in packages:
-            raise ImporterError("channel repository metadata is invalid")
-        packages[match.group(1)] = fields["checksum"].text
-    return packages
-
-
 def mirror_channel(channel, work_dir, *, public=None, trust_root=None):
-    """Return ({arch: {filename: bytes}}, ledger, state_ok) for what the channel serves today."""
+    """Return ({arch: {filename: bytes}}, ledger) for what the channel serves today.
+
+    The signed ledger and the package hashes it records are the only inputs that are
+    trusted. Repository metadata is derived data: it is rebuilt from the packages on
+    every publication, so metadata left half-written by an interrupted run does not
+    block the next one and cannot influence what is mirrored.
+    """
     root = Path(trust_root or Path(__file__).resolve().parents[1])
     public = public or _Public()
     work = Path(work_dir)
     work.mkdir(parents=True, exist_ok=True)
-    ledger_bytes = public.get(channel, LEDGER, 1024 * 1024)
-    ledger_signature = public.get(channel, LEDGER + ".sig", 64 * 1024)
-    if (ledger_bytes is None) != (ledger_signature is None):
-        raise ImporterError("channel imports ledger signature is inconsistent")
-    if ledger_bytes is not None:
-        _verify_detached(root, channel, ledger_bytes, ledger_signature, work)
+    envelope = public.get(channel, LEDGER, 1024 * 1024)
+    legacy_signature = public.get(channel, LEDGER + ".sig", 64 * 1024) if _is_legacy_ledger(envelope) else None
+    ledger_bytes = open_ledger(root, channel, envelope, work, legacy_signature)
     ledger = load_ledger(ledger_bytes)
     mirrored = {}
     for arch in ARCHITECTURES:
-        prefix = f"{FEDORA}/{arch}"
-        repomd = public.get(channel, f"{prefix}/repodata/repomd.xml")
-        signature = public.get(channel, f"{prefix}/repodata/repomd.xml.asc", 64 * 1024)
-        if repomd is None and signature is None:
-            if ledger.get(arch):
-                raise ImporterError("channel repository is missing metadata that the ledger records")
-            mirrored[arch] = {}
-            continue
-        if repomd is None or signature is None:
-            raise ImporterError("channel repository metadata signature is missing")
-        _verify_detached(root, channel, repomd, signature, work)
-        listed = _primary_packages(repomd, public, channel, arch)
-        recorded = ledger.get(arch, {})
-        if set(listed) != set(recorded):
-            raise ImporterError("channel repository packages do not match the ledger")
         files = {}
-        for filename, digest in listed.items():
-            data = public.get(channel, f"{prefix}/Packages/{filename}", MAX_RPM_BYTES)
-            actual = hashlib.sha256(data).hexdigest() if data is not None else None
-            if actual is None or actual != digest or actual != recorded[filename]["sha256"]:
-                raise ImporterError("a published package differs from the signed metadata")
+        for filename, entry in ledger.get(arch, {}).items():
+            data = public.get(channel, f"{FEDORA}/{arch}/Packages/{filename}", MAX_RPM_BYTES)
+            if data is None or not hmac.compare_digest(hashlib.sha256(data).hexdigest(), entry["sha256"]):
+                raise ImporterError("a published package differs from the signed ledger")
             files[filename] = data
         mirrored[arch] = files
     return mirrored, ledger
@@ -513,10 +498,15 @@ def build_repository(stage, gpg_home, fingerprint, ledger):
               fingerprint + "!", "--armor", "--detach-sign", "--output", str(directory / "repodata/repomd.xml.asc"),
               str(directory / "repodata/repomd.xml")], timeout=120)
     ledger_path = Path(stage) / LEDGER
-    ledger_path.write_text(json.dumps({"schema_version": 1, "packages": ledger}, sort_keys=True, indent=2) + "\n",
-                           encoding="utf-8")
+    content = json.dumps({"schema_version": 1, "packages": ledger}, sort_keys=True, indent=2) + "\n"
+    unsigned = Path(stage).parent / "ledger.json"
+    unsigned.write_text(content, encoding="utf-8")
+    signature_path = Path(stage).parent / "ledger.json.asc"
+    signature_path.unlink(missing_ok=True)
     _run(["gpg", "--batch", "--yes", "--homedir", str(gpg_home), "--no-options", "--local-user",
-          fingerprint + "!", "--detach-sign", "--output", str(ledger_path) + ".sig", str(ledger_path)], timeout=120)
+          fingerprint + "!", "--armor", "--detach-sign", "--output", str(signature_path), str(unsigned)], timeout=120)
+    ledger_path.write_text(json.dumps({"ledger": content, "signature": signature_path.read_text(encoding="ascii")},
+                                      sort_keys=True), encoding="utf-8")
 
 
 def _rank(relative):
@@ -530,8 +520,6 @@ def _rank(relative):
         return 1
     if relative == LEDGER:
         return 4
-    if relative == LEDGER + ".sig":
-        return 5
     return 6
 
 
@@ -544,7 +532,7 @@ def _checked_key(channel, key):
     return key
 
 
-def plan_uploads(stage, channel, remote_sizes, extra_files=None):
+def plan_uploads(stage, channel, remote_sizes, extra_files=None, overwrite=()):
     files = {}
     for path in sorted(Path(stage).rglob("*")):
         if path.is_file():
@@ -554,7 +542,7 @@ def plan_uploads(stage, channel, remote_sizes, extra_files=None):
     for relative, content in files.items():
         key = f"{channel}/{relative}"
         _checked_key(channel, key)
-        if relative.endswith(".rpm") and key in remote_sizes:
+        if relative.endswith(".rpm") and key in remote_sizes and relative not in overwrite:
             if remote_sizes[key] != len(content):
                 raise ImporterError("a published package differs from the staged package")
             continue
@@ -665,8 +653,9 @@ def publish_release(descriptor, work_dir, credentials_path, gpg_home, fingerprin
         packages.mkdir(parents=True)
         for name, data in files[arch].items():
             (packages / name).write_bytes(data)
-        sign_packages(packages, [new[arch]], gpg_home, fingerprint)
-        updated[arch][new[arch]]["sha256"] = hashlib.sha256((packages / new[arch]).read_bytes()).hexdigest()
+        if arch in new:
+            sign_packages(packages, [new[arch]], gpg_home, fingerprint)
+            updated[arch][new[arch]]["sha256"] = hashlib.sha256((packages / new[arch]).read_bytes()).hexdigest()
     build_repository(stage, gpg_home, fingerprint, updated)
     credentials = r2_probe.load_credentials(credentials_path)
     if credentials.get("bucket") != issuer.BUCKET or credentials.get("prefix") != channel + "/":
@@ -678,10 +667,11 @@ def publish_release(descriptor, work_dir, credentials_path, gpg_home, fingerprin
     repo_file = root / "descriptors" / channel / f"luminus-{channel}.repo"
     if repo_file.is_file():
         extra[f"luminus-{channel}.repo"] = repo_file.read_bytes()
-    plan = plan_uploads(stage, channel, storage.list_keys(f"{channel}/"), extra)
+    overwrite = {f"{FEDORA}/{arch}/Packages/{name}" for arch, name in new.items()}
+    plan = plan_uploads(stage, channel, storage.list_keys(f"{channel}/"), extra, overwrite)
     written = upload(plan, channel, credentials, storage=storage, public_verify=public_verify)
     return {"status": "imported", "version": checked["version"], "objects": written,
-            "packages": {arch: new[arch] for arch in ARCHITECTURES}}
+            "packages": dict(new)}
 
 
 def prepare_release(descriptor, work_dir, *, root=None, public=None, artifact_lister=None):
