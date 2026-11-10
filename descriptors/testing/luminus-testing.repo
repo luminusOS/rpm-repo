@@ -1,0 +1,8 @@
+[luminus-testing]
+name=Luminus OS (testing)
+baseurl=https://rpm.luminusos.org/testing/45/$basearch/
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=https://rpm.luminusos.org/testing/luminus.asc
+metadata_expire=1h
