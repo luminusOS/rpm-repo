@@ -66,8 +66,8 @@ class DescriptorTests(unittest.TestCase):
                 rpm_import.parse_checksums(bad)
 
     def test_location_and_key_paths_cannot_escape(self):
-        for bad in ("../x.rpm", "Packages/../x.rpm", "Packages/a/b.rpm", "/Packages/x.rpm"):
-            self.assertIsNone(rpm_import.LOCATION.fullmatch(bad))
+        for bad in ("../x.rpm", "Packages/../x.rpm", "Packages/a/b.rpm", "/Packages/x.rpm", "x.rpm/"):
+            self.assertIsNone(rpm_import.RPM_NAME.fullmatch(bad))
         with self.assertRaises(ImporterError):
             rpm_import._checked_key("testing", "testing/../stable/x")
         with self.assertRaises(ImporterError):
@@ -80,7 +80,7 @@ class UploadOrderTests(unittest.TestCase):
         self.addCleanup(shutil.rmtree, stage)
         for name in ("45/x86_64/Packages/a.rpm", "45/x86_64/repodata/abc-primary.xml.gz",
                      "45/x86_64/repodata/repomd.xml", "45/x86_64/repodata/repomd.xml.asc",
-                     "luminus-imports.json", "luminus-imports.json.sig"):
+                     "luminus-imports.json"):
             (stage / name).parent.mkdir(parents=True, exist_ok=True)
             (stage / name).write_bytes(b"x")
         plan = rpm_import.plan_uploads(stage, "testing", {}, {"luminus.asc": b"k"})
@@ -298,7 +298,7 @@ class RealRepositoryTests(unittest.TestCase):
         self.publish(self.release("1.0.5-rc.1"))
         result = self.publish(self.release("1.0.5-rc.2"))
         self.assertEqual(result["status"], "imported")
-        ledger = json.loads(self.storage["testing/luminus-imports.json"])
+        ledger = json.loads(json.loads(self.storage["testing/luminus-imports.json"])["ledger"])
         for arch in rpm_import.ARCHITECTURES:
             self.assertEqual(len(ledger["packages"][arch]), 2)
             self.assertEqual(sum(1 for key in self.storage if key.startswith(f"testing/45/{arch}/Packages/")), 2)
@@ -337,13 +337,13 @@ class RealRepositoryTests(unittest.TestCase):
         pristine = dict(self.storage)
         next_release = self.release("1.0.5-rc.2")
         cases = {
-            "repomd": lambda s: s.__setitem__("testing/45/x86_64/repodata/repomd.xml",
-                                              s["testing/45/x86_64/repodata/repomd.xml"] + b" "),
-            "signature removed": lambda s: s.pop("testing/45/x86_64/repodata/repomd.xml.asc"),
             "package": lambda s: s.__setitem__(
                 "testing/45/aarch64/Packages/sirius-installer-1.0.5-rc.1-1.aarch64.rpm", b"evil"),
-            "ledger": lambda s: s.__setitem__("testing/luminus-imports.json",
-                                              s["testing/luminus-imports.json"] + b" "),
+            "ledger": lambda s: s.__setitem__("testing/luminus-imports.json", json.dumps(
+                {**json.loads(s["testing/luminus-imports.json"]),
+                 "ledger": json.loads(s["testing/luminus-imports.json"])["ledger"] + " "}).encode()),
+            "ledger signature replaced": lambda s: s.__setitem__("testing/luminus-imports.json", json.dumps(
+                {**json.loads(s["testing/luminus-imports.json"]), "signature": ""}).encode()),
             "package removed": lambda s: s.pop(
                 "testing/45/x86_64/Packages/sirius-installer-1.0.5-rc.1-1.x86_64.rpm"),
         }
@@ -357,16 +357,98 @@ class RealRepositoryTests(unittest.TestCase):
                     self.publish(next_release)
                 self.assertEqual(self.storage, damaged)
 
-    def test_metadata_signed_by_the_other_channel_is_rejected(self):
+    def test_a_channel_with_the_earlier_detached_signature_ledger_can_still_be_extended(self):
         self.publish(self.release("1.0.5-rc.1"))
-        other = Path(tempfile.mkdtemp(dir=self.base))
-        repomd = self.storage["testing/45/x86_64/repodata/repomd.xml"]
-        (other / "m").write_bytes(repomd)
-        run("gpg", "--batch", "--yes", "--local-user", self.fingerprints["stable"] + "!", "--armor",
-            "--detach-sign", "--output", str(other / "m.asc"), str(other / "m"), env=self.env)
-        self.storage["testing/45/x86_64/repodata/repomd.xml.asc"] = (other / "m.asc").read_bytes()
+        envelope = json.loads(self.storage["testing/luminus-imports.json"])
+        self.storage["testing/luminus-imports.json"] = envelope["ledger"].encode()
+        self.storage["testing/luminus-imports.json.sig"] = envelope["signature"].encode()
+        self.assertEqual(self.publish(self.release("1.0.5-rc.2"))["status"], "imported")
+        self.assertEqual(set(json.loads(self.storage["testing/luminus-imports.json"])), {"ledger", "signature"})
+        self.assertIn("testing/luminus-imports.json.sig", self.storage)
+        self.assertEqual(self.publish(self.release("1.0.5-rc.3"))["status"], "imported")
+        self.storage["testing/luminus-imports.json"] = envelope["ledger"].encode() + b" "
         with self.assertRaises(ImporterError):
-            self.publish(self.release("1.0.5-rc.2"))
+            self.publish(self.release("1.0.5-rc.4"))
+
+    def test_damaged_repository_metadata_is_rebuilt_from_the_verified_packages(self):
+        self.publish(self.release("1.0.5-rc.1"))
+        pristine = dict(self.storage)
+        cases = {
+            "repomd changed": lambda s: s.__setitem__("testing/45/x86_64/repodata/repomd.xml",
+                                                      s["testing/45/x86_64/repodata/repomd.xml"] + b" "),
+            "signature removed": lambda s: s.pop("testing/45/x86_64/repodata/repomd.xml.asc"),
+            "metadata removed": lambda s: [s.pop(k) for k in [k for k in s if "/repodata/" in k]],
+        }
+        for name, damage in cases.items():
+            with self.subTest(name):
+                self.storage.clear()
+                self.storage.update(pristine)
+                damage(self.storage)
+                self.assertEqual(self.publish(self.release("1.0.5-rc.2"))["status"], "imported")
+                for arch in rpm_import.ARCHITECTURES:
+                    self.assertEqual(self.verify_metadata(arch), "ok", name)
+
+    def verify_metadata(self, arch):
+        repomd = self.storage[f"testing/45/{arch}/repodata/repomd.xml"]
+        signature = self.storage[f"testing/45/{arch}/repodata/repomd.xml.asc"]
+        rpm_import._verify_detached(self.root, "testing", repomd, signature, self.work)
+        return "ok"
+
+    def interrupted(self, release, fail_on):
+        outer = self
+        storage = self.storage_object()
+        count = {"n": 0}
+
+        class Interrupted:
+            def put(self, key, content):
+                count["n"] += 1
+                if fail_on(key, count["n"]):
+                    raise ImporterError("simulated interruption")
+                storage.put(key, content)
+
+            def list_keys(self, prefix):
+                return storage.list_keys(prefix)
+
+        credentials = self.work / "credentials.json"
+        credentials.write_text("{}")
+        channel = release["channel"]
+        lister = lambda repository, run_id, fetcher=None: {"x86_64": 11, "aarch64": 12}  # noqa: E731
+        with self.fetch(), mock.patch.object(rpm_import.r2_probe, "load_credentials", lambda path: {
+                "bucket": rpm_import.issuer.BUCKET, "prefix": channel + "/", "expires_at": 10 ** 12}), \
+                mock.patch.object(rpm_import, "verify_tmpfs", lambda path: Path(path)):
+            return rpm_import.publish_release(
+                release, self.work / f"cut-{count['n']}-{outer.work.stat().st_nlink}", credentials, self.gnupg,
+                self.fingerprints[channel], root=self.root, public=self.public(), storage=Interrupted(),
+                public_verify=lambda key, content: self.storage.get(key) == content, artifact_lister=lister)
+
+    def test_a_run_cut_off_at_any_upload_can_be_repeated_and_leaves_a_consistent_channel(self):
+        self.publish(self.release("1.0.5-rc.1"))
+        base = dict(self.storage)
+        release = self.release("1.0.5-rc.2")
+        total = len(self.interrupted_plan(release))
+        for cut in range(1, total + 1):
+            with self.subTest(cut=cut):
+                self.storage.clear()
+                self.storage.update(base)
+                with self.assertRaises(ImporterError):
+                    self.interrupted(release, lambda key, n, cut=cut: n == cut)
+                result = self.publish(release)
+                self.assertIn(result["status"], ("imported", "unchanged"))
+                ledger = json.loads(json.loads(self.storage["testing/luminus-imports.json"])["ledger"])["packages"]
+                for arch in rpm_import.ARCHITECTURES:
+                    self.assertEqual(len(ledger[arch]), 2)
+                    self.assertEqual(self.verify_metadata(arch), "ok")
+                    for name, entry in ledger[arch].items():
+                        data = self.storage[f"testing/45/{arch}/Packages/{name}"]
+                        self.assertEqual(hashlib.sha256(data).hexdigest(), entry["sha256"])
+                        self.assertTrue(self.checksig(data, "testing"))
+
+    def interrupted_plan(self, release):
+        sizes = []
+        self.interrupted(release, lambda key, n: sizes.append(n) or False)
+        count = len(sizes)
+        self.storage.clear()
+        return range(count)
 
     def test_signing_with_the_other_channels_key_is_refused_before_anything_is_written(self):
         desc = self.release("1.0.5-rc.1")
@@ -379,18 +461,6 @@ class RealRepositoryTests(unittest.TestCase):
                     public=self.public(), storage=self.storage_object(),
                     artifact_lister=lambda repository, run_id, fetcher=None: {"x86_64": 11, "aarch64": 12})
         self.assertEqual(self.storage, {})
-
-    def test_primary_metadata_that_inflates_beyond_the_limit_is_rejected(self):
-        import gzip
-        bomb = gzip.compress(b"<a>" + b"x" * 5000 + b"</a>")
-        digest = hashlib.sha256(bomb).hexdigest()
-        repomd = ('<repomd xmlns="http://linux.duke.edu/metadata/repo"><data type="primary">'
-                  f'<checksum type="sha256">{digest}</checksum><location href="repodata/{digest}-primary.xml.gz"/>'
-                  '</data></repomd>').encode()
-        public = rpm_import._Public(lambda url, limit: bomb)
-        with mock.patch.object(rpm_import, "MAX_PRIMARY_XML_BYTES", 1000):
-            with self.assertRaises(ImporterError):
-                rpm_import._primary_packages(repomd, public, "testing", "x86_64")
 
     def test_the_stable_channel_refuses_a_release_candidate(self):
         with self.assertRaises(ImporterError):

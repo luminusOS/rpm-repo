@@ -24,7 +24,7 @@ version, the tag, the commit, and the source run and attempt of the release.
 ```
 <channel>/45/<arch>/Packages/*.rpm
 <channel>/45/<arch>/repodata/...      repomd.xml.asc is a detached signature
-<channel>/luminus-imports.json        signed ledger of what was imported
+<channel>/luminus-imports.json        ledger of what was imported, with its signature
 <channel>/luminus.asc                 public key of the channel
 <channel>/luminus-<channel>.repo      DNF repository file
 ```
@@ -61,3 +61,21 @@ release assets and the tag of the Sirius repository can therefore still publish
 different packages; protect that repository accordingly. A signed channel can also be
 replayed to an older state by whoever controls the bucket, so clients should rely on
 newer-version checks in DNF rather than on the repository alone.
+
+## Interrupted runs
+
+A run can stop at any upload: expired credentials, a runner failure or a cancelled job.
+It is safe to dispatch the same release again.
+
+- Packages are written first. Metadata is derived data and is rebuilt from the packages
+  on every run, so metadata left half-written does not block the next one.
+- The ledger and its signature are one object, so a single write replaces both.
+- A package that was uploaded but not yet recorded in the ledger is replaced by the next
+  run, which signs it again and records the digest of what it uploaded.
+- Only the signed ledger and the packages it lists are trusted as input. If one of them
+  was removed or changed, the run stops and writes nothing.
+
+Clients that read the channel while a run is in progress see either the previous
+repository or the new one. In the short moment between the metadata and its signature a
+client that already cached the old metadata keeps working, and a refresh fails and is
+retried by DNF.
