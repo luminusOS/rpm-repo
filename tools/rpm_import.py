@@ -10,7 +10,7 @@ new is added, so a damaged or tampered public repository stops the import.
 
 import argparse
 from dataclasses import dataclass
-import gzip
+import zlib
 import hashlib
 import hmac
 import json
@@ -46,6 +46,7 @@ KEY_NAME = "luminus.asc"
 MAX_CHECKSUMS_BYTES = 64 * 1024
 MAX_RPM_BYTES = 256 * 1024 * 1024
 MAX_METADATA_BYTES = 64 * 1024 * 1024
+MAX_PRIMARY_XML_BYTES = 256 * 1024 * 1024
 DOWNLOAD_TIMEOUT = 30
 PUBLIC_VERIFY_TIMEOUT = 120
 USER_AGENT = "luminus-rpm-publisher/1"
@@ -381,8 +382,12 @@ def _primary_packages(repomd, public, channel, arch):
     if blob is None or not hmac.compare_digest(hashlib.sha256(blob).hexdigest(), checksum.text):
         raise ImporterError("channel repository metadata does not match its signed index")
     try:
-        primary = ElementTree.fromstring(gzip.decompress(blob))
-    except (OSError, EOFError, ElementTree.ParseError) as error:
+        inflater = zlib.decompressobj(wbits=31)
+        xml = inflater.decompress(blob, MAX_PRIMARY_XML_BYTES + 1)
+        if len(xml) > MAX_PRIMARY_XML_BYTES or inflater.unconsumed_tail:
+            raise ImporterError("channel repository metadata is too large")
+        primary = ElementTree.fromstring(xml)
+    except (zlib.error, ElementTree.ParseError) as error:
         raise ImporterError("channel repository metadata is invalid") from error
     packages = {}
     for item in primary:
@@ -651,6 +656,8 @@ def publish_release(descriptor, work_dir, credentials_path, gpg_home, fingerprin
         return {"status": "unchanged", "version": checked["version"]}
     verify_tmpfs(gpg_home)
     fingerprint = _check_fingerprint(fingerprint)
+    if fingerprint != _identity(channel, root)[0]["signing_subkey_fingerprint"]:
+        raise ImporterError("signing key is not the configured subkey of this channel")
     stage = work / "stage"
     shutil.rmtree(stage, ignore_errors=True)
     for arch in ARCHITECTURES:

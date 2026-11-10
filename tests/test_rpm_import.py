@@ -368,6 +368,30 @@ class RealRepositoryTests(unittest.TestCase):
         with self.assertRaises(ImporterError):
             self.publish(self.release("1.0.5-rc.2"))
 
+    def test_signing_with_the_other_channels_key_is_refused_before_anything_is_written(self):
+        desc = self.release("1.0.5-rc.1")
+        credentials = self.work / "credentials.json"
+        credentials.write_text("{}")
+        with self.fetch(), mock.patch.object(rpm_import, "verify_tmpfs", lambda path: Path(path)):
+            with self.assertRaises(ImporterError):
+                rpm_import.publish_release(
+                    desc, self.work / "swap", credentials, self.gnupg, self.fingerprints["stable"], root=self.root,
+                    public=self.public(), storage=self.storage_object(),
+                    artifact_lister=lambda repository, run_id, fetcher=None: {"x86_64": 11, "aarch64": 12})
+        self.assertEqual(self.storage, {})
+
+    def test_primary_metadata_that_inflates_beyond_the_limit_is_rejected(self):
+        import gzip
+        bomb = gzip.compress(b"<a>" + b"x" * 5000 + b"</a>")
+        digest = hashlib.sha256(bomb).hexdigest()
+        repomd = ('<repomd xmlns="http://linux.duke.edu/metadata/repo"><data type="primary">'
+                  f'<checksum type="sha256">{digest}</checksum><location href="repodata/{digest}-primary.xml.gz"/>'
+                  '</data></repomd>').encode()
+        public = rpm_import._Public(lambda url, limit: bomb)
+        with mock.patch.object(rpm_import, "MAX_PRIMARY_XML_BYTES", 1000):
+            with self.assertRaises(ImporterError):
+                rpm_import._primary_packages(repomd, public, "testing", "x86_64")
+
     def test_the_stable_channel_refuses_a_release_candidate(self):
         with self.assertRaises(ImporterError):
             self.publish(self.release("1.0.5-rc.1", "stable"))

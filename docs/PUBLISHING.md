@@ -51,3 +51,13 @@ ledger last. A client therefore never sees metadata that points at a missing pac
 Open Actions, choose "Publish RPM release", select `testing` for a release
 candidate or `stable` for a final release, and fill in the values of the Sirius
 release run. Stable runs need the reviewer approval configured on the environment.
+
+## Limits
+
+The release packages are checked against the checksums published on the same GitHub
+release, and the release is tied to a successful source run, a tag that points at the
+descriptor commit and the expected workflow by the issuer. Someone who can rewrite
+release assets and the tag of the Sirius repository can therefore still publish
+different packages; protect that repository accordingly. A signed channel can also be
+replayed to an older state by whoever controls the bucket, so clients should rely on
+newer-version checks in DNF rather than on the repository alone.
