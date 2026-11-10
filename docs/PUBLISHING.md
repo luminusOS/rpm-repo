@@ -79,3 +79,13 @@ Clients that read the channel while a run is in progress see either the previous
 repository or the new one. In the short moment between the metadata and its signature a
 client that already cached the old metadata keeps working, and a refresh fails and is
 retried by DNF.
+
+## Retention and rollback
+
+Nothing is deleted automatically, and the publish workflow never removes packages.
+`tools/retention.py LEDGER [PINS]` reads a channel ledger and lists which packages are
+outside the newest three versions and not pinned. It only reports. Pin any file that an
+image build or recovery procedure still needs, as a JSON list of file names.
+
+DNF installs an older version only when asked (`dnf downgrade`). There is no automatic
+downgrade, and the channel always offers every retained version.
