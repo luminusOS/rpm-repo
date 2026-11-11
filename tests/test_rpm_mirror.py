@@ -100,6 +100,33 @@ class DownloadTests(unittest.TestCase):
             rpm_mirror.download("https://evil.example/x.rpm", opener=good)
 
 
+class RedirectChainTests(unittest.TestCase):
+    def test_the_copr_chain_through_the_red_hat_mirror_to_its_bucket_is_followed(self):
+        from urllib.error import HTTPError
+
+        class Response:
+            status = 200
+            headers = {"Content-Length": str(len(DATA))}
+
+            def read(self, limit):
+                return DATA
+
+            def close(self):
+                pass
+
+        chain = iter(["https://packages.redhat.com/api/x.rpm", "https://copr-pulp-prod.s3.amazonaws.com/a?sig=1"])
+
+        class Opener:
+            def open(self, request, timeout):
+                location = next(chain, None)
+                if location is None:
+                    return Response()
+                raise HTTPError(request.full_url, 302, "found", {"Location": location}, None)
+
+        url = "https://download.copr.fedorainfracloud.org/results/x/x/fedora-45-x86_64/Packages/x/x.rpm"
+        self.assertEqual(rpm_mirror.download(url, opener=Opener()), DATA)
+
+
 class MergeTests(unittest.TestCase):
     def test_a_new_package_is_added_next_to_the_existing_ones(self):
         sirius = {"sirius-installer-1.0.5-1.x86_64.rpm": {"version": "1.0.5", "release_sha256": "a" * 64,
