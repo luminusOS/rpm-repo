@@ -127,6 +127,15 @@ class RedirectChainTests(unittest.TestCase):
         self.assertEqual(rpm_mirror.download(url, opener=Opener()), DATA)
 
 
+class SigningTests(unittest.TestCase):
+    def test_an_upstream_signature_is_removed_before_the_channel_key_signs(self):
+        calls = []
+        with mock.patch.object(rpm_import, "_run", side_effect=lambda command, **kw: calls.append(command)):
+            rpm_import.sign_packages("/stage", ["tool-1.0.0-1.x86_64.rpm"], "/gnupg", "A" * 40)
+        self.assertIn("--delsign", calls[0])
+        self.assertIn("--addsign", calls[1])
+
+
 class MergeTests(unittest.TestCase):
     def test_a_new_package_is_added_next_to_the_existing_ones(self):
         sirius = {"sirius-installer-1.0.5-1.x86_64.rpm": {"version": "1.0.5", "release_sha256": "a" * 64,

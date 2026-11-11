@@ -491,6 +491,7 @@ def _check_fingerprint(value):
 
 def sign_packages(directory, names, gpg_home, fingerprint):
     for name in names:
+        _run(["rpmsign", "--delsign", str(Path(directory) / name)], timeout=300)
         _run(["rpmsign", "--define", f"_gpg_path {gpg_home}", "--define", f"_gpg_name {fingerprint}!",
               "--addsign", str(Path(directory) / name)], timeout=300)
 
