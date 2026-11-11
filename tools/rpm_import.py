@@ -78,6 +78,16 @@ def rpm_version(version):
     return version.replace("-rc.", "~rc.")
 
 
+_FILENAME = re.compile(r"(.+?)-v?[0-9][^/]*\.[^./]+\.rpm\Z")
+
+
+def package_name(filename):
+    match = _FILENAME.fullmatch(filename)
+    if not match:
+        raise ImporterError("package file name is invalid")
+    return match.group(1)
+
+
 def rpm_filename(version, arch):
     return f"{PACKAGE}-{version}-1.{arch}.rpm"
 
@@ -448,8 +458,8 @@ def merge_release(mirrored, ledger, checked, paths, inspected):
             if known["release_sha256"] != digest or known["manifest_sha256"] != checked["manifest_sha256"]:
                 raise ImporterError("this version was already published with different content")
             continue
-        for entry in updated[arch].values():
-            if _version_key(entry["version"]) >= _version_key(version):
+        for other, entry in updated[arch].items():
+            if package_name(other) == PACKAGE and _version_key(entry["version"]) >= _version_key(version):
                 raise ImporterError("a newer or equal version is already published")
         updated[arch][name] = {"version": version, "release_sha256": digest, "sha256": digest,
                                "source_run_id": checked["source_run_id"],

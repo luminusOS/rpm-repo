@@ -37,6 +37,8 @@ _SHA = re.compile(r"[0-9a-fA-F]{40,64}\Z")
 _RUN_ID = re.compile(r"[1-9][0-9]{0,19}\Z")
 _TAG = re.compile(r"^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-rc\.?([1-9][0-9]*))?\Z")
 _VERSION_CONTRACT = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-rc\.([1-9][0-9]*))?\Z")
+MIRROR_PACKAGE_ID = "luminus-mirror"
+MIRROR_VERSION = "mirror"
 SOURCE_RELEASES = {
     "dev.luminusos.ZapTide": ("luminusOS/zaptide", ".github/workflows/release.yml",
                                ".github/workflows/release.yml", "flatpak"),
@@ -72,6 +74,8 @@ def validate_descriptor(descriptor, package_format=FORMAT, channel=None):
     if channel not in CHANNELS:
         raise IssuerError("Channel is not allowed")
     package_id = descriptor["package_id"]
+    if package_id == MIRROR_PACKAGE_ID:
+        return _validate_mirror_descriptor(descriptor)
     source = SOURCE_RELEASES.get(package_id) if isinstance(package_id, str) else None
     if source is None or source[3] != package_format:
         raise IssuerError("Release descriptor is invalid")
@@ -87,6 +91,30 @@ def validate_descriptor(descriptor, package_format=FORMAT, channel=None):
     if type(attempt) is not int or attempt < 1:
         raise IssuerError("Release descriptor is invalid")
     return {**descriptor, "git_sha": descriptor["git_sha"].lower()}
+
+
+def _validate_mirror_descriptor(descriptor):
+    """A mirror publication has no upstream release: it is the run of this repository
+    that reads the pinned mirror.json of its own commit."""
+    if (descriptor["version"] != MIRROR_VERSION or not isinstance(descriptor["git_sha"], str)
+            or not _SHA.fullmatch(descriptor["git_sha"]) or not isinstance(descriptor["source_run_id"], str)
+            or not _RUN_ID.fullmatch(descriptor["source_run_id"])
+            or type(descriptor["source_run_attempt"]) is not int or descriptor["source_run_attempt"] < 1):
+        raise IssuerError("Release descriptor is invalid")
+    return {**descriptor, "git_sha": descriptor["git_sha"].lower()}
+
+
+def verify_mirror_run(descriptor, channel, environ=None):
+    validated = validate_descriptor(descriptor, FORMAT, channel)
+    environ = os.environ if environ is None else environ
+    if (validated["package_id"] != MIRROR_PACKAGE_ID
+            or environ.get("GITHUB_REPOSITORY") != REPOSITORY
+            or environ.get("GITHUB_REF") != "refs/heads/main"
+            or environ.get("GITHUB_SHA", "").lower() != validated["git_sha"]
+            or environ.get("GITHUB_RUN_ID") != validated["source_run_id"]
+            or environ.get("GITHUB_RUN_ATTEMPT") != str(validated["source_run_attempt"])):
+        raise IssuerError("Mirror run provenance is invalid")
+    return validated
 
 
 def validate_envelope_descriptor(descriptor, package_format, channel):
@@ -465,8 +493,11 @@ def sigv4_self_test(credentials, channel, now=None):
 def issue_credentials(channel, descriptor, environ=None, ttl=DEFAULT_TTL_SECONDS, now=None,
                      fetcher=None):
     environ = os.environ if environ is None else environ
-    verified = verify_source_run(descriptor, FORMAT, channel, fetcher=fetcher,
-                                 token=environ.get("GITHUB_TOKEN"))
+    if isinstance(descriptor, dict) and descriptor.get("package_id") == MIRROR_PACKAGE_ID:
+        verified = verify_mirror_run(descriptor, channel, environ)
+    else:
+        verified = verify_source_run(descriptor, FORMAT, channel, fetcher=fetcher,
+                                     token=environ.get("GITHUB_TOKEN"))
     try:
         key_id = environ[PARENT_ID_ENV]
         parent_secret = environ[PARENT_SECRET_ENV]

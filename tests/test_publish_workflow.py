@@ -188,5 +188,37 @@ class PublishWorkflowTests(unittest.TestCase):
         self.assertIn('"format":"rpm"', self.raw)
 
 
+class MirrorWorkflowTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.raw = (ROOT / ".github/workflows/publish-mirror.yml").read_text(encoding="utf-8")
+        cls.workflow = yaml.load(cls.raw, Loader=UniqueKeyLoader)
+
+    def test_the_only_input_is_the_channel_and_jobs_are_gated_like_the_release_workflow(self):
+        self.assertEqual(set(self.workflow["on"]), {"workflow_dispatch"})
+        self.assertEqual(set(self.workflow["on"]["workflow_dispatch"]["inputs"]), {"channel"})
+        self.assertEqual(list(self.workflow["jobs"]), ["checks", "prepare", "issuer", "publisher"])
+        for job in self.workflow["jobs"].values():
+            self.assertIn("github.ref_protected", job["if"])
+            self.assertIn("refs/heads/main", job["if"])
+        self.assertIn("issuer-${{ inputs.channel }}", self.workflow["jobs"]["issuer"]["environment"])
+        self.assertIn("publisher-${{ inputs.channel }}", self.workflow["jobs"]["publisher"]["environment"])
+
+    def test_the_mirror_importer_does_the_work_and_no_script_interpolates_inputs(self):
+        self.assertIn("tools/rpm_mirror.py --mode prepare", self.raw)
+        self.assertIn("tools/rpm_mirror.py --mode publish", self.raw)
+        self.assertIn("--package-id luminus-mirror", self.raw)
+        self.assertNotIn("rpm_import.py", self.raw)
+        for job in self.workflow["jobs"].values():
+            for step in job.get("steps", []):
+                if "run" in step:
+                    self.assertNotIn("${{ inputs.", step["run"])
+        for action in re.findall(r"uses:\s*([^\s]+)", self.raw):
+            self.assertRegex(action, r"@([0-9a-f]{40})$")
+
+    def test_prepare_has_no_credentials(self):
+        self.assertNotIn("secrets.", str(self.workflow["jobs"]["prepare"]))
+
+
 if __name__ == "__main__":
     unittest.main()
