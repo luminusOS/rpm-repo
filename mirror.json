@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "packages": [
+    {
+      "name": "elastic-swap",
+      "version": "0.2.4",
+      "release": "1.fc45",
+      "arch": "x86_64",
+      "url": "https://github.com/luminusOS/elastic-swap/releases/download/v0.2.4/elastic-swap-0.2.4-1.fc45.x86_64.rpm",
+      "sha256": "b35783cc4b444c7fc398d995b43cd7e8e72ba74ee29506fc92ea5f8d88d1be35",
+      "license": "GPL-3.0-only AND MIT AND BSD-3-Clause"
+    },
+    {
+      "name": "gnome-shell-extension-aurora-shell",
+      "version": "51.1",
+      "release": "1.fc45",
+      "arch": "noarch",
+      "url": "https://github.com/luminusOS/aurora-shell/releases/download/v51.1/gnome-shell-extension-aurora-shell-51.1-1.fc45.noarch.rpm",
+      "sha256": "67a4c71d4a937003af259f864486fc8a6c477f30ebe0db06da750059703ca2f4",
+      "license": "GPL-3.0-or-later"
+    },
+    {
+      "name": "appimage-thumbnailer",
+      "version": "v4.1.1",
+      "release": "1",
+      "arch": "x86_64",
+      "url": "https://github.com/kem-a/appimage-thumbnailer/releases/download/v4.1.1/appimage-thumbnailer-v4.1.1-1.x86_64.rpm",
+      "sha256": "c249b93ed422be6348c5f162c640ef1cf02f00a26d5afe014c3685122ca7c050",
+      "license": "MIT"
+    },
+    {
+      "name": "ddcutil-service",
+      "version": "1.0.15",
+      "release": "0",
+      "arch": "x86_64",
+      "url": "https://download.copr.fedorainfracloud.org/results/hopsayer/ddcutil-service/fedora-45-x86_64/Packages/d/ddcutil-service-1.0.15-0.x86_64.rpm",
+      "sha256": "05518dcadd7e24b31633fa5f4b2e3dbb002813ecad26c41e3cc4cbac3646dcfb",
+      "license": "GPL-2.0-or-later"
+    }
+  ]
+}

@@ -89,3 +89,13 @@ image build or recovery procedure still needs, as a JSON list of file names.
 
 DNF installs an older version only when asked (`dnf downgrade`). There is no automatic
 downgrade, and the channel always offers every retained version.
+
+## Mirrored packages
+
+Packages that no Luminus release workflow builds (elastic-swap,
+appimage-thumbnailer, ddcutil-service and the Aurora Shell RPM) are listed in
+`mirror.json` with their exact URL and SHA-256. `publish-mirror.yml` takes only
+the channel, has the same test, issuer and publisher gates as `publish.yml`, and
+runs `tools/rpm_mirror.py`. It downloads each pinned file, checks the digest and
+the RPM header, signs it with the channel key and adds it next to the Sirius
+packages. Changing what the mirror serves needs a reviewed commit on `main`.

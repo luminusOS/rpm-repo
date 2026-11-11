@@ -8,6 +8,7 @@ inside a published installer image.
 
 import json
 from pathlib import Path
+import re
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -17,14 +18,34 @@ from contracts import distribution_contract  # noqa: E402
 KEEP_NEWEST = 3
 
 
+def _key(version):
+    return [(0, int(part)) if part.isdigit() else (1, part) for part in re.findall(r"[0-9]+|[A-Za-z]+", version)]
+
+
+def _sort_key(entry):
+    try:
+        return (0, distribution_contract._version_key(entry["version"]))
+    except (ValueError, KeyError, TypeError):
+        return (1, _key(entry["version"]))
+
+
+def _name(filename):
+    match = re.fullmatch(r"(.+?)-v?[0-9][^/]*\.[^./]+\.rpm", filename)
+    return match.group(1) if match else ""
+
+
 def plan(ledger, pins=(), keep=KEEP_NEWEST):
     result = {}
     for arch, entries in sorted(ledger.items()):
-        ordered = sorted(entries, key=lambda name: distribution_contract._version_key(entries[name]["version"]),
-                         reverse=True)
-        kept = set(ordered[:keep]) | (set(pins) & set(entries))
-        result[arch] = {"keep": [name for name in ordered if name in kept],
-                        "removable": [name for name in ordered if name not in kept]}
+        keep_names = set(pins) & set(entries)
+        ordered = []
+        for package in sorted({_name(name) for name in entries}):
+            versions = [name for name in entries if _name(name) == package]
+            versions.sort(key=lambda name: _sort_key(entries[name]), reverse=True)
+            ordered.extend(versions)
+            keep_names.update(versions[:keep])
+        result[arch] = {"keep": [name for name in ordered if name in keep_names],
+                        "removable": [name for name in ordered if name not in keep_names]}
     return result
 
 
