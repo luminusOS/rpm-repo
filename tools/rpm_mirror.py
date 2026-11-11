@@ -33,8 +33,8 @@ MIRROR_FILE = "mirror.json"
 SOURCE_RUN = "mirror"
 START_HOSTS = {"github.com", "download.copr.fedorainfracloud.org"}
 REDIRECT_HOSTS = {"objects.githubusercontent.com", "release-assets.githubusercontent.com",
-                  "packages.redhat.com"}
-MAX_REDIRECTS = 2
+                  "packages.redhat.com", "copr-pulp-prod.s3.amazonaws.com"}
+MAX_REDIRECTS = 3
 _NAME = re.compile(r"[a-z0-9][a-z0-9+._-]{0,99}\Z")
 _FIELD = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+~]{0,63}\Z")
 _ENTRY_KEYS = {"name", "version", "release", "arch", "url", "sha256", "license"}
