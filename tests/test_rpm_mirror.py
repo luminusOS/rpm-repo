@@ -55,6 +55,19 @@ class PinTests(unittest.TestCase):
         with self.assertRaises(ImporterError):
             rpm_mirror.load_pins(self.write([pin(), pin()]))
 
+    def test_testing_pins_are_not_selected_for_stable(self):
+        common = pin()
+        testing = pin(name="testing-tool", channels=["testing"])
+        root = self.write([common, testing])
+        self.assertEqual(rpm_mirror.load_pins(root, channel="stable"), [common])
+        self.assertEqual(rpm_mirror.load_pins(root, channel="testing"), [common, testing])
+        self.assertEqual(rpm_mirror.pin_digest(testing), rpm_mirror.pin_digest(pin(name="testing-tool")))
+
+    def test_invalid_channel_restrictions_are_refused(self):
+        for channels in ([], ["production"], "testing", ["stable", "stable"], [None]):
+            with self.subTest(channels=channels), self.assertRaises(ImporterError):
+                rpm_mirror.load_pins(self.write([pin(channels=channels)]))
+
 
 class DownloadTests(unittest.TestCase):
     def test_a_package_that_does_not_match_its_pin_is_refused(self):
