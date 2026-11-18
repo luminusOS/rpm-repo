@@ -37,12 +37,14 @@ class PinTests(unittest.TestCase):
         (Path(directory) / "mirror.json").write_text(json.dumps({"schema_version": 1, "packages": packages}))
         return Path(directory)
 
-    def test_the_committed_pins_are_valid_and_cover_the_four_packages(self):
+    def test_the_committed_pins_are_valid_and_cover_the_expected_packages(self):
         pins = rpm_mirror.load_pins(ROOT)
         self.assertEqual({entry["name"] for entry in pins},
                          {"elastic-swap", "gnome-shell-extension-aurora-shell", "appimage-thumbnailer",
-                          "ddcutil-service"})
+                          "ddcutil-service", "gnome-foreground-booster"})
         self.assertEqual([entry["arch"] for entry in pins if entry["name"].startswith("gnome-shell")], ["noarch"])
+        self.assertNotIn("gnome-foreground-booster",
+                         {entry["name"] for entry in rpm_mirror.load_pins(ROOT, channel="stable")})
 
     def test_pins_outside_the_host_allowlist_or_with_bad_fields_are_refused(self):
         for bad in (pin(url="http://github.com/x.rpm"), pin(url="https://example.com/x.rpm"),

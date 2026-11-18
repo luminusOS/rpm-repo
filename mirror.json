@@ -36,6 +36,16 @@
       "url": "https://download.copr.fedorainfracloud.org/results/hopsayer/ddcutil-service/fedora-45-x86_64/Packages/d/ddcutil-service-1.0.15-0.x86_64.rpm",
       "sha256": "05518dcadd7e24b31633fa5f4b2e3dbb002813ecad26c41e3cc4cbac3646dcfb",
       "license": "GPL-2.0-or-later"
+    },
+    {
+      "name": "gnome-foreground-booster",
+      "version": "0.1.0",
+      "release": "1.fc45",
+      "arch": "x86_64",
+      "url": "https://github.com/luminusOS/gnome-foreground-booster/releases/download/v0.1.0/gnome-foreground-booster-0.1.0-1.fc45.x86_64.rpm",
+      "sha256": "8e8ed48c00e98c770042a4c204e2f3ff66b2b77b4176723350d36cc10aff092e",
+      "license": "GPL-3.0-only AND (Apache-2.0 OR MIT) AND (Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT) AND (MIT OR Unlicense)",
+      "channels": ["testing"]
     }
   ]
 }
