@@ -40,7 +40,7 @@ _FIELD = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+~]{0,63}\Z")
 _ENTRY_KEYS = {"name", "version", "release", "arch", "url", "sha256", "license"}
 
 
-def load_pins(root=None):
+def load_pins(root=None, *, channel=None):
     path = Path(root or Path(__file__).resolve().parents[1]) / MIRROR_FILE
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
@@ -52,8 +52,13 @@ def load_pins(root=None):
         raise ImporterError("mirror list is invalid")
     seen = set()
     for entry in document["packages"]:
-        if not isinstance(entry, dict) or set(entry) != _ENTRY_KEYS:
+        if not isinstance(entry, dict) or set(entry) - {"channels"} != _ENTRY_KEYS:
             raise ImporterError("mirror entry is invalid")
+        channels = entry.get("channels", list(rpm_import.CHANNELS))
+        if (not isinstance(channels, list) or not channels
+                or any(value not in rpm_import.CHANNELS for value in channels)
+                or len(channels) != len(set(channels))):
+            raise ImporterError("mirror entry channels are invalid")
         if (not _NAME.fullmatch(str(entry["name"])) or not _FIELD.fullmatch(str(entry["version"]))
                 or not _FIELD.fullmatch(str(entry["release"]))
                 or entry["arch"] not in ("noarch", *ARCHITECTURES)
@@ -68,7 +73,8 @@ def load_pins(root=None):
         if key in seen:
             raise ImporterError("mirror list repeats a package")
         seen.add(key)
-    return document["packages"]
+    return [entry for entry in document["packages"]
+            if channel is None or channel in entry.get("channels", rpm_import.CHANNELS)]
 
 
 def filename(entry):
@@ -143,7 +149,8 @@ def _compare_key(value):
 
 
 def pin_digest(entry):
-    return hashlib.sha256(json.dumps(entry, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    identity = {key: entry[key] for key in _ENTRY_KEYS}
+    return hashlib.sha256(json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
 def merge_mirror(mirrored, ledger, packages):
@@ -174,9 +181,9 @@ def merge_mirror(mirrored, ledger, packages):
     return files, updated, new
 
 
-def prepare(work_dir, *, root=None, public=None, fetcher=None):
+def prepare(work_dir, *, channel, root=None, fetcher=None):
     root = Path(root or Path(__file__).resolve().parents[1])
-    pins = load_pins(root)
+    pins = load_pins(root, channel=channel)
     packages = fetch_packages(Path(work_dir) / "release", pins, fetcher=fetcher)
     return packages
 
@@ -185,7 +192,7 @@ def publish(channel, work_dir, credentials_path, gpg_home, fingerprint, *, root=
             storage=None, public_verify=None, fetcher=None):
     root = Path(root or Path(__file__).resolve().parents[1])
     work = Path(work_dir)
-    packages = prepare(work, root=root, fetcher=fetcher)
+    packages = prepare(work, channel=channel, root=root, fetcher=fetcher)
     mirrored, ledger = rpm_import.mirror_channel(channel, work / "verify", public=public, trust_root=root)
     files, updated, new = merge_mirror(mirrored, ledger, packages)
     if not new:
@@ -237,7 +244,7 @@ def main(argv=None):
     try:
         if args.mode == "prepare":
             root = Path(__file__).resolve().parents[1]
-            packages = prepare(args.work_dir, root=root)
+            packages = prepare(args.work_dir, channel=args.channel, root=root)
             mirrored, ledger = rpm_import.mirror_channel(args.channel, Path(args.work_dir) / "verify",
                                                          trust_root=root)
             _files, _updated, new = merge_mirror(mirrored, ledger, packages)

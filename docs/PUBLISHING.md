@@ -99,3 +99,6 @@ the channel, has the same test, issuer and publisher gates as `publish.yml`, and
 runs `tools/rpm_mirror.py`. It downloads each pinned file, checks the digest and
 the RPM header, signs it with the channel key and adds it next to the Sirius
 packages. Changing what the mirror serves needs a reviewed commit on `main`.
+
+A pin may set `"channels": ["testing"]` to prevent stable publication.
+Pins without `channels` are eligible for both channels.
